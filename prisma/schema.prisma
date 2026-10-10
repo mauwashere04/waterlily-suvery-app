@@ -1,0 +1,107 @@
+// Schema overview
+//
+// - User: signs up with email + password (bcrypt hash). No email verification.
+// - Session: server-side session row; only a hash of the session token is stored
+//   (the raw token lives only in the httpOnly cookie), so a stolen DB dump can't
+//   be replayed as a live session.
+// - Survey: one seeded survey. Question belongs to a Survey (not hardcoded) so a
+//   second survey could be added later without a schema change.
+// - Question: ordered by `position` within its survey. `type` is one of
+//   "text" | "number" | "single" (SQLite has no native enum support in Prisma,
+//   so this is validated in application code).
+// - QuestionOption: only present for `type: "single"` questions; ordered by
+//   `position` within its question.
+// - Submission: the one-per-user record for a survey. The `(userId, surveyId)`
+//   unique constraint is what actually blocks a second submission -- enforced
+//   by the database, not just a UI check.
+// - Answer: one row per question per submission. Always stored as a string
+//   regardless of question type, so the review page is a single join with no
+//   per-type branching. The `(submissionId, questionId)` unique constraint
+//   mirrors the one-answer-per-question rule at the database level.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  sessions     Session[]
+  submissions  Submission[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+}
+
+model Survey {
+  id          String       @id @default(cuid())
+  title       String
+  description String
+  questions   Question[]
+  submissions Submission[]
+}
+
+model Question {
+  id          String           @id @default(cuid())
+  surveyId    String
+  key         String
+  position    Int
+  title       String
+  description String
+  type        String
+  survey      Survey           @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  options     QuestionOption[]
+  answers     Answer[]
+
+  @@unique([surveyId, key])
+  @@index([surveyId])
+}
+
+model QuestionOption {
+  id         String   @id @default(cuid())
+  questionId String
+  label      String
+  position   Int
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}
+
+model Submission {
+  id          String   @id @default(cuid())
+  userId      String
+  surveyId    String
+  submittedAt DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  survey      Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  answers     Answer[]
+
+  @@unique([userId, surveyId])
+}
+
+model Answer {
+  id           String     @id @default(cuid())
+  submissionId String
+  questionId   String
+  value        String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  question     Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, questionId])
+  @@index([submissionId])
+}
